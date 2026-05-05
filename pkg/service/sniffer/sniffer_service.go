@@ -1,6 +1,7 @@
 package sniffer
 
 import (
+	"context"
 	"io"
 )
 
@@ -11,7 +12,7 @@ type SnifferService interface {
 	// Rollback actions performed during the Setup phase
 	Cleanup() error
 
-	// Start remote sniffing
-	// write remote capture output to the given io writer.
-	Start(stdOut io.Writer) error
+	// Start remote sniffing, writing capture output to stdOut.
+	// Blocks until the context is cancelled or tcpdump exits.
+	Start(ctx context.Context, stdOut io.Writer) error
 }

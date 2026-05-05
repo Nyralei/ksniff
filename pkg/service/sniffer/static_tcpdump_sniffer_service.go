@@ -1,6 +1,7 @@
 package sniffer
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -40,13 +41,13 @@ func (u *StaticTcpdumpSnifferService) Cleanup() error {
 	return nil
 }
 
-func (u *StaticTcpdumpSnifferService) Start(stdOut io.Writer) error {
+func (u *StaticTcpdumpSnifferService) Start(ctx context.Context, stdOut io.Writer) error {
 	log.Info("start sniffing on remote container")
 
 	command := []string{u.settings.UserSpecifiedRemoteTcpdumpPath, "-i", u.settings.UserSpecifiedInterface,
 		"-U", "-w", "-", u.settings.UserSpecifiedFilter}
 
-	exitCode, err := u.kubernetesApiService.ExecuteCommand(u.settings.UserSpecifiedPodName, u.settings.UserSpecifiedContainer, command, stdOut)
+	exitCode, err := u.kubernetesApiService.ExecuteCommand(ctx, u.settings.UserSpecifiedPodName, u.settings.UserSpecifiedContainer, command, stdOut)
 	if err != nil || exitCode != 0 {
 		return fmt.Errorf("executing sniffer failed, exit code: '%d'", exitCode)
 	}

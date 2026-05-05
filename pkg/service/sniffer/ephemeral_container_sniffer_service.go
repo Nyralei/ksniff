@@ -101,7 +101,7 @@ func (e *EphemeralContainerSnifferService) isEphemeralContainerRunning() bool {
 	return false
 }
 
-func (e *EphemeralContainerSnifferService) Start(stdOut io.Writer) error {
+func (e *EphemeralContainerSnifferService) Start(ctx context.Context, stdOut io.Writer) error {
 	log.Infof("starting tcpdump in ephemeral container '%s'", e.ephemeralContainerName)
 
 	command := []string{"tcpdump", "-i", e.settings.UserSpecifiedInterface, "-U", "-w", "-", e.settings.UserSpecifiedFilter}
@@ -114,6 +114,7 @@ func (e *EphemeralContainerSnifferService) Start(stdOut io.Writer) error {
 			Pod:        e.settings.UserSpecifiedPodName,
 			Container:  e.ephemeralContainerName,
 		},
+		Context: ctx,
 		Command: command,
 		StdOut:  stdOut,
 		StdErr:  log.StandardLogger().Writer(),

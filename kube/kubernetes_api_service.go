@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +12,7 @@ import (
 )
 
 type KubernetesApiService interface {
-	ExecuteCommand(podName string, containerName string, command []string, stdOut io.Writer) (int, error)
+	ExecuteCommand(ctx context.Context, podName string, containerName string, command []string, stdOut io.Writer) (int, error)
 
 	UploadFile(localPath string, remotePath string, podName string, containerName string) error
 }
@@ -30,7 +31,7 @@ func NewKubernetesApiService(clientset *kubernetes.Clientset,
 		targetNamespace: targetNamespace}
 }
 
-func (k *KubernetesApiServiceImpl) ExecuteCommand(podName string, containerName string, command []string, stdOut io.Writer) (int, error) {
+func (k *KubernetesApiServiceImpl) ExecuteCommand(ctx context.Context, podName string, containerName string, command []string, stdOut io.Writer) (int, error) {
 
 	log.Infof("executing command: '%s' on container: '%s', pod: '%s', namespace: '%s'", command, containerName, podName, k.targetNamespace)
 	stdErr := new(Writer)
@@ -43,6 +44,7 @@ func (k *KubernetesApiServiceImpl) ExecuteCommand(podName string, containerName 
 			Pod:        podName,
 			Container:  containerName,
 		},
+		Context: ctx,
 		Command: command,
 		StdErr:  stdErr,
 		StdOut:  stdOut,
@@ -67,7 +69,7 @@ func (k *KubernetesApiServiceImpl) checkIfFileExistOnPod(remotePath string, podN
 
 	command := []string{"/bin/sh", "-c", fmt.Sprintf("test -f %s", remotePath)}
 
-	exitCode, err := k.ExecuteCommand(podName, containerName, command, stdOut)
+	exitCode, err := k.ExecuteCommand(context.Background(), podName, containerName, command, stdOut)
 	if err != nil {
 		return false, err
 	}

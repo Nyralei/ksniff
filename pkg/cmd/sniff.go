@@ -347,7 +347,7 @@ func (o *Ksniff) Run() error {
 			fileWriter = f
 		}
 
-		return o.snifferService.Start(fileWriter)
+		return o.snifferService.Start(ctx, fileWriter)
 	}
 
 	log.Info("spawning wireshark!")
@@ -370,7 +370,7 @@ func (o *Ksniff) Run() error {
 
 	sniffDone := make(chan error, 1)
 	go func() {
-		sniffDone <- o.snifferService.Start(stdinWriter)
+		sniffDone <- o.snifferService.Start(ctx, stdinWriter)
 	}()
 
 	wiresharkDone := make(chan error, 1)

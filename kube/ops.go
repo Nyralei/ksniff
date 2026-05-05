@@ -26,6 +26,7 @@ type KubeRequest struct {
 
 type ExecCommandRequest struct {
 	KubeRequest
+	Context context.Context
 	Command []string
 	StdIn   io.Reader
 	StdOut  io.Writer
@@ -133,7 +134,11 @@ func PodExecuteCommand(req ExecCommandRequest) (int, error) {
 		return 0, err
 	}
 
-	err = exec.StreamWithContext(context.Background(), remotecommand.StreamOptions{
+	ctx := req.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 		Stdin:  req.StdIn,
 		Stdout: req.StdOut,
 		Stderr: req.StdErr,
