@@ -1,14 +1,14 @@
 package cmd
 
 import (
-	"ksniff/pkg/config"
 	"strings"
+	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 
-	"testing"
+	"ksniff/pkg/config"
 )
 
 func TestComplete_NotEnoughArguments(t *testing.T) {
