@@ -9,12 +9,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"ksniff/kube"
 	"ksniff/pkg/config"
 	"ksniff/pkg/service/sniffer"
+	"ksniff/pkg/service/sniffer/runtime"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -119,18 +121,33 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 	_ = viper.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
 
 	cmd.Flags().StringVarP(&ksniffSettings.Mode, "mode", "", "upload",
-		"sniffing mode: upload (default) or ephemeral")
+		"sniffing mode: upload (default), ephemeral, or privileged")
 	_ = viper.BindEnv("mode", "KSNIFF_MODE")
 	_ = viper.BindPFlag("mode", cmd.Flags().Lookup("mode"))
 
 	cmd.Flags().DurationVarP(&ksniffSettings.UserSpecifiedPodCreateTimeout, "pod-creation-timeout", "",
-		1*time.Minute, "the length of time to wait for the ephemeral container to start (e.g. 20s, 2m, 1h). "+
+		1*time.Minute, "the length of time to wait for pod/container to start (e.g. 20s, 2m, 1h). "+
 			"A value of zero means it never times out.")
+
+	cmd.Flags().StringVarP(&ksniffSettings.Image, "image", "", "",
+		"the privileged container image (optional, privileged mode only)")
+	_ = viper.BindEnv("image", "KUBECTL_PLUGINS_LOCAL_FLAG_IMAGE")
+	_ = viper.BindPFlag("image", cmd.Flags().Lookup("image"))
 
 	cmd.Flags().StringVarP(&ksniffSettings.TCPDumpImage, "tcpdump-image", "", "",
 		"the tcpdump container image (optional)")
 	_ = viper.BindEnv("tcpdump-image", "KUBECTL_PLUGINS_LOCAL_FLAG_TCPDUMP_IMAGE")
 	_ = viper.BindPFlag("tcpdump-image", cmd.Flags().Lookup("tcpdump-image"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.SocketPath, "socket", "", "",
+		"the container runtime socket path (optional, privileged mode only)")
+	_ = viper.BindEnv("socket", "KUBECTL_PLUGINS_SOCKET_PATH")
+	_ = viper.BindPFlag("socket", cmd.Flags().Lookup("socket"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedServiceAccount, "serviceaccount", "s", "",
+		"the privileged container service account (optional, privileged mode only)")
+	_ = viper.BindEnv("serviceaccount", "KUBECTL_PLUGINS_LOCAL_FLAG_SERVICE_ACCOUNT")
+	_ = viper.BindPFlag("serviceaccount", cmd.Flags().Lookup("serviceaccount"))
 
 	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedKubeContext, "context", "x", "",
 		"kubectl context to work on (optional)")
@@ -161,8 +178,13 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 	o.settings.UserSpecifiedRemoteTcpdumpPath = viper.GetString("remote-tcpdump-path")
 	o.settings.UserSpecifiedVerboseMode = viper.GetBool("verbose")
 	o.settings.UserSpecifiedKubeContext = viper.GetString("context")
+	o.settings.Image = viper.GetString("image")
 	o.settings.TCPDumpImage = viper.GetString("tcpdump-image")
+	o.settings.SocketPath = viper.GetString("socket")
+	o.settings.UseDefaultImage = !viper.IsSet("image")
 	o.settings.UseDefaultTCPDumpImage = !viper.IsSet("tcpdump-image")
+	o.settings.UseDefaultSocketPath = !viper.IsSet("socket")
+	o.settings.UserSpecifiedServiceAccount = viper.GetString("serviceaccount")
 
 	var err error
 
@@ -279,18 +301,42 @@ func (o *Ksniff) Validate() error {
 		log.Infof("selected container: '%s'", o.settings.UserSpecifiedContainer)
 	}
 
+	o.settings.DetectedPodNodeName = pod.Spec.NodeName
+
 	kubernetesApiService := kube.NewKubernetesApiService(o.clientset, o.restConfig, o.resultingContext.Namespace)
 
 	switch o.settings.Mode {
 	case "ephemeral":
 		log.Info("sniffing method: ephemeral container")
 		o.snifferService = sniffer.NewEphemeralContainerSnifferService(o.settings, o.clientset, o.restConfig, o.resultingContext.Namespace)
+	case "privileged":
+		log.Info("sniffing method: privileged pod")
+		if err := o.findContainerId(pod); err != nil {
+			return err
+		}
+		bridge := runtime.NewContainerRuntimeBridge(o.settings.DetectedContainerRuntime)
+		o.snifferService = sniffer.NewPrivilegedPodRemoteSniffingService(o.settings, kubernetesApiService, bridge)
 	default:
 		log.Info("sniffing method: upload static tcpdump")
 		o.snifferService = sniffer.NewUploadTcpdumpRemoteSniffingService(o.settings, kubernetesApiService)
 	}
 
 	return nil
+}
+
+func (o *Ksniff) findContainerId(pod *corev1.Pod) error {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == o.settings.UserSpecifiedContainer {
+			parts := strings.SplitN(cs.ContainerID, "://", 2)
+			if len(parts) != 2 {
+				break
+			}
+			o.settings.DetectedContainerRuntime = parts[0]
+			o.settings.DetectedContainerId = parts[1]
+			return nil
+		}
+	}
+	return fmt.Errorf("couldn't find container '%s' in pod '%s'", o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedPodName)
 }
 
 func findLocalTcpdumpBinaryPath() (string, error) {
