@@ -25,7 +25,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
-          version: latest
+          version: ~> v2
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -63,3 +63,21 @@ jobs:
           tags: |
             ${{ env.IMAGE_VERSIONED }}
             ${{ env.IMAGE_LATEST }}
+
+      - name: Set helper image tags
+        run: |
+          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          echo "HELPER_VERSIONED=ghcr.io/${OWNER}/ksniff-helper:${{ github.ref_name }}" >> $GITHUB_ENV
+          echo "HELPER_LATEST=ghcr.io/${OWNER}/ksniff-helper:latest" >> $GITHUB_ENV
+
+      - name: Build and push ksniff-helper image
+        uses: docker/build-push-action@v6
+        with:
+          context: images/ksniff-helper
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          push: true
+          tags: |
+            ${{ env.HELPER_VERSIONED }}
+            ${{ env.HELPER_LATEST }}

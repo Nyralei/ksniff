@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,7 +19,6 @@ import (
 	"ksniff/pkg/service/sniffer"
 	"ksniff/pkg/service/sniffer/runtime"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	corev1 "k8s.io/api/core/v1"
@@ -42,17 +42,16 @@ const minimumNumberOfArguments = 1
 const tcpdumpBinaryName = "static-tcpdump"
 const tcpdumpRemotePath = "/tmp/static-tcpdump"
 
-var tcpdumpLocalBinaryPathLookupList []string
-
 type Ksniff struct {
-	configFlags      *genericclioptions.ConfigFlags
-	resultingContext *api.Context
-	clientset        *kubernetes.Clientset
-	restConfig       *rest.Config
-	rawConfig        api.Config
-	settings         *config.KsniffSettings
-	snifferService   sniffer.SnifferService
-	wireshark        *exec.Cmd
+	configFlags                      *genericclioptions.ConfigFlags
+	resultingContext                 *api.Context
+	clientset                        *kubernetes.Clientset
+	restConfig                       *rest.Config
+	rawConfig                        api.Config
+	settings                         *config.KsniffSettings
+	snifferService                   sniffer.SnifferService
+	wireshark                        *exec.Cmd
+	tcpdumpLocalBinaryPathLookupList []string
 }
 
 func NewKsniff(settings *config.KsniffSettings) *Ksniff {
@@ -60,7 +59,7 @@ func NewKsniff(settings *config.KsniffSettings) *Ksniff {
 }
 
 func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
-	ksniffSettings := config.NewKsniffSettings(streams)
+	ksniffSettings := config.NewKsniffSettings()
 
 	ksniff := NewKsniff(ksniffSettings)
 
@@ -189,11 +188,11 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 	var err error
 
 	if o.settings.UserSpecifiedVerboseMode {
-		log.Info("running in verbose mode")
-		log.SetLevel(log.DebugLevel)
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		slog.Info("running in verbose mode")
 	}
 
-	tcpdumpLocalBinaryPathLookupList, err = o.buildTcpdumpBinaryPathLookupList()
+	o.tcpdumpLocalBinaryPathLookupList, err = o.buildTcpdumpBinaryPathLookupList()
 	if err != nil {
 		return err
 	}
@@ -273,11 +272,11 @@ func (o *Ksniff) Validate() error {
 	var err error
 
 	if o.settings.Mode == "upload" {
-		o.settings.UserSpecifiedLocalTcpdumpPath, err = findLocalTcpdumpBinaryPath()
+		o.settings.UserSpecifiedLocalTcpdumpPath, err = o.findLocalTcpdumpBinaryPath()
 		if err != nil {
 			return err
 		}
-		log.Infof("using tcpdump path at: '%s'", o.settings.UserSpecifiedLocalTcpdumpPath)
+		slog.Info("using tcpdump path", "path", o.settings.UserSpecifiedLocalTcpdumpPath)
 	}
 
 	pod, err := o.clientset.CoreV1().Pods(o.resultingContext.Namespace).Get(context.TODO(), o.settings.UserSpecifiedPodName, v1.GetOptions{})
@@ -289,16 +288,16 @@ func (o *Ksniff) Validate() error {
 		return fmt.Errorf("cannot sniff on a container in a completed pod; current phase is %s", pod.Status.Phase)
 	}
 
-	log.Debugf("pod '%s' status: '%s'", o.settings.UserSpecifiedPodName, pod.Status.Phase)
+	slog.Debug("pod status", "pod", o.settings.UserSpecifiedPodName, "status", pod.Status.Phase)
 
 	if len(pod.Spec.Containers) < 1 {
 		return errors.New("no containers found in the specified pod")
 	}
 
 	if o.settings.UserSpecifiedContainer == "" {
-		log.Info("no container specified, taking first container we found in pod.")
+		slog.Info("no container specified, using first container in pod")
 		o.settings.UserSpecifiedContainer = pod.Spec.Containers[0].Name
-		log.Infof("selected container: '%s'", o.settings.UserSpecifiedContainer)
+		slog.Info("selected container", "container", o.settings.UserSpecifiedContainer)
 	}
 
 	o.settings.DetectedPodNodeName = pod.Spec.NodeName
@@ -307,17 +306,17 @@ func (o *Ksniff) Validate() error {
 
 	switch o.settings.Mode {
 	case "ephemeral":
-		log.Info("sniffing method: ephemeral container")
+		slog.Info("sniffing method: ephemeral container")
 		o.snifferService = sniffer.NewEphemeralContainerSnifferService(o.settings, o.clientset, o.restConfig, o.resultingContext.Namespace)
 	case "privileged":
-		log.Info("sniffing method: privileged pod")
+		slog.Info("sniffing method: privileged pod")
 		if err := o.findContainerId(pod); err != nil {
 			return err
 		}
 		bridge := runtime.NewContainerRuntimeBridge(o.settings.DetectedContainerRuntime)
 		o.snifferService = sniffer.NewPrivilegedPodRemoteSniffingService(o.settings, kubernetesApiService, bridge)
 	default:
-		log.Info("sniffing method: upload static tcpdump")
+		slog.Info("sniffing method: upload static tcpdump")
 		o.snifferService = sniffer.NewUploadTcpdumpRemoteSniffingService(o.settings, kubernetesApiService)
 	}
 
@@ -339,30 +338,33 @@ func (o *Ksniff) findContainerId(pod *corev1.Pod) error {
 	return fmt.Errorf("couldn't find container '%s' in pod '%s'", o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedPodName)
 }
 
-func findLocalTcpdumpBinaryPath() (string, error) {
-	log.Debugf("searching for tcpdump binary using lookup list: '%v'", tcpdumpLocalBinaryPathLookupList)
+func (o *Ksniff) findLocalTcpdumpBinaryPath() (string, error) {
+	slog.Debug("searching for tcpdump binary", "paths", o.tcpdumpLocalBinaryPathLookupList)
 
-	for _, possibleTcpdumpPath := range tcpdumpLocalBinaryPathLookupList {
+	for _, possibleTcpdumpPath := range o.tcpdumpLocalBinaryPathLookupList {
 		if _, err := os.Stat(possibleTcpdumpPath); err == nil {
-			log.Debugf("tcpdump binary found at: '%s'", possibleTcpdumpPath)
-
+			slog.Debug("tcpdump binary found", "path", possibleTcpdumpPath)
 			return possibleTcpdumpPath, nil
 		}
-
-		log.Debugf("tcpdump binary was not found at: '%s'", possibleTcpdumpPath)
+		slog.Debug("tcpdump binary not found", "path", possibleTcpdumpPath)
 	}
 
-	return "", fmt.Errorf("couldn't find static tcpdump binary on any of: '%v'", tcpdumpLocalBinaryPathLookupList)
+	return "", fmt.Errorf("couldn't find static tcpdump binary on any of: '%v'", o.tcpdumpLocalBinaryPathLookupList)
 }
 
 func (o *Ksniff) Run() error {
-	log.Infof("sniffing on pod: '%s' [namespace: '%s', container: '%s', filter: '%s', interface: '%s']",
-		o.settings.UserSpecifiedPodName, o.resultingContext.Namespace, o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedFilter, o.settings.UserSpecifiedInterface)
+	slog.Info("sniffing",
+		"pod", o.settings.UserSpecifiedPodName,
+		"namespace", o.resultingContext.Namespace,
+		"container", o.settings.UserSpecifiedContainer,
+		"filter", o.settings.UserSpecifiedFilter,
+		"interface", o.settings.UserSpecifiedInterface,
+	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := o.snifferService.Setup(); err != nil {
+	if err := o.snifferService.Setup(ctx); err != nil {
 		return err
 	}
 
@@ -371,15 +373,14 @@ func (o *Ksniff) Run() error {
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = cleanupCtx // reserved for future ctx-aware Cleanup
-		log.Info("starting sniffer cleanup")
-		if err := o.snifferService.Cleanup(); err != nil {
-			log.WithError(err).Error("cleanup failed; manual teardown may be required")
+		slog.Info("starting sniffer cleanup")
+		if err := o.snifferService.Cleanup(cleanupCtx); err != nil {
+			slog.Error("cleanup failed; manual teardown may be required", "error", err)
 		}
 	}()
 
 	if o.settings.UserSpecifiedOutputFile != "" {
-		log.Infof("output file option specified, storing output in: '%s'", o.settings.UserSpecifiedOutputFile)
+		slog.Info("writing capture to file", "path", o.settings.UserSpecifiedOutputFile)
 
 		var fileWriter io.Writer
 		if o.settings.UserSpecifiedOutputFile == "-" {
@@ -396,7 +397,7 @@ func (o *Ksniff) Run() error {
 		return o.snifferService.Start(ctx, fileWriter)
 	}
 
-	log.Info("spawning wireshark!")
+	slog.Info("spawning wireshark")
 
 	title := fmt.Sprintf("gui.window_title:%s/%s/%s", o.resultingContext.Namespace, o.settings.UserSpecifiedPodName, o.settings.UserSpecifiedContainer)
 	o.wireshark = exec.Command("wireshark", "-k", "-i", "-", "-o", title)
@@ -404,7 +405,7 @@ func (o *Ksniff) Run() error {
 	defer func() {
 		if o.wireshark != nil && o.wireshark.Process != nil {
 			if err := o.wireshark.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				log.WithError(err).Error("failed to kill wireshark process")
+				slog.Error("failed to kill wireshark process", "error", err)
 			}
 		}
 	}()
@@ -429,7 +430,7 @@ func (o *Ksniff) Run() error {
 		return nil
 	case err := <-sniffDone:
 		if err != nil {
-			log.WithError(err).Error("sniffing stopped unexpectedly")
+			slog.Error("sniffing stopped unexpectedly", "error", err)
 		}
 		return err
 	case err := <-wiresharkDone:

@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 
-	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -17,7 +17,7 @@ import (
 )
 
 type KubeRequest struct {
-	Clientset  *kubernetes.Clientset
+	Clientset  kubernetes.Interface
 	RestConfig *rest.Config
 	Namespace  string
 	Pod        string
@@ -62,14 +62,14 @@ func PodUploadFile(req UploadFileRequest) (int, error) {
 	stdOut := new(Writer)
 	stdErr := new(Writer)
 
-	log.Debugf("uploading file from: '%s' to '%s'", req.Src, req.Dst)
+	slog.Debug("uploading file", "src", req.Src, "dst", req.Dst)
 
 	fileContent, err := os.ReadFile(req.Src)
 	if err != nil {
 		return 0, err
 	}
 
-	log.Debugf("read '%s' to memory, file size: '%d'", req.Src, len(fileContent))
+	slog.Debug("read file to memory", "src", req.Src, "size", len(fileContent))
 
 	destFileName := path.Base(req.Dst)
 	tarFile, err := WrapAsTar(destFileName, fileContent)
@@ -77,7 +77,7 @@ func PodUploadFile(req UploadFileRequest) (int, error) {
 		return 0, err
 	}
 
-	log.Debugf("formatted '%s' as tar, tar size: '%d'", req.Src, len(tarFile))
+	slog.Debug("formatted as tar", "src", req.Src, "tarSize", len(tarFile))
 
 	stdIn := bytes.NewReader(tarFile)
 
@@ -88,7 +88,7 @@ func PodUploadFile(req UploadFileRequest) (int, error) {
 		tarCmd = append(tarCmd, "-C", destDir)
 	}
 
-	log.Debugf("executing tar: '%v'", tarCmd)
+	slog.Debug("executing tar", "cmd", tarCmd)
 
 	execTarRequest := ExecCommandRequest{
 		KubeRequest: KubeRequest{
@@ -106,8 +106,7 @@ func PodUploadFile(req UploadFileRequest) (int, error) {
 
 	exitCode, err := PodExecuteCommand(execTarRequest)
 
-	log.Debugf("done uploading file, exitCode: '%d', stdOut: '%s', stdErr: '%s'",
-		exitCode, stdOut.Output, stdErr.Output)
+	slog.Debug("done uploading file", "exitCode", exitCode, "stdout", stdOut.Output, "stderr", stdErr.Output)
 
 	return exitCode, err
 }

@@ -2,8 +2,6 @@ package config
 
 import (
 	"time"
-
-	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
 type KsniffSettings struct {
@@ -31,6 +29,6 @@ type KsniffSettings struct {
 	DetectedContainerRuntime       string
 }
 
-func NewKsniffSettings(streams genericclioptions.IOStreams) *KsniffSettings {
+func NewKsniffSettings() *KsniffSettings {
 	return &KsniffSettings{}
 }

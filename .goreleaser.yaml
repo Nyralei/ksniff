@@ -10,6 +10,10 @@ builds:
     binary: kubectl-sniff
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - -X main.Version={{ .Tag }}
+      - -X ksniff/pkg/service/sniffer.DefaultTCPDumpImage=ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | lower }}/ksniff-tcpdump:{{ .Tag }}
+      - -X ksniff/pkg/service/sniffer/runtime.DefaultHelperImage=ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | lower }}/ksniff-helper:{{ .Tag }}
     goos:
       - linux
       - darwin

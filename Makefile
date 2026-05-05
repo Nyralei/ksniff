@@ -29,19 +29,25 @@ PLUGIN_NAME=kubectl-sniff
 endif
 
 linux:
-	 GOOS=linux GOARCH=amd64 go build -o kubectl-sniff cmd/kubectl-sniff.go
+	 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o kubectl-sniff cmd/kubectl-sniff.go
 
 windows:
-	 GOOS=windows GOARCH=amd64 go build -o kubectl-sniff-windows cmd/kubectl-sniff.go
+	 GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o kubectl-sniff-windows cmd/kubectl-sniff.go
 
 darwin:
-	 GOOS=darwin GOARCH=amd64 go build -o kubectl-sniff-darwin cmd/kubectl-sniff.go
-	 GOOS=darwin GOARCH=arm64 go build -o kubectl-sniff-darwin-arm64 cmd/kubectl-sniff.go
+	 GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o kubectl-sniff-darwin cmd/kubectl-sniff.go
+	 GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o kubectl-sniff-darwin-arm64 cmd/kubectl-sniff.go
 
 all: linux windows darwin
 
-IMAGE_REPO ?= ghcr.io/nyralei/ksniff-tcpdump
-IMAGE_TAG  ?= latest
+IMAGE_REPO        ?= ghcr.io/nyralei/ksniff-tcpdump
+HELPER_IMAGE_REPO ?= ghcr.io/nyralei/ksniff-helper
+IMAGE_TAG         ?= latest
+VERSION           ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+LDFLAGS := -ldflags "-X main.Version=$(VERSION) \
+  -X ksniff/pkg/service/sniffer.DefaultTCPDumpImage=$(IMAGE_REPO):$(IMAGE_TAG) \
+  -X ksniff/pkg/service/sniffer/runtime.DefaultHelperImage=$(HELPER_IMAGE_REPO):$(IMAGE_TAG)"
 
 # Build multi-arch image and verify it compiles for both platforms (cached, not pushed).
 # Use `make image-push` to publish to the registry.

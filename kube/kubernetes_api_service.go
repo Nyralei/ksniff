@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,12 +30,12 @@ type KubernetesApiService interface {
 }
 
 type KubernetesApiServiceImpl struct {
-	clientset       *kubernetes.Clientset
+	clientset       kubernetes.Interface
 	restConfig      *rest.Config
 	targetNamespace string
 }
 
-func NewKubernetesApiService(clientset *kubernetes.Clientset,
+func NewKubernetesApiService(clientset kubernetes.Interface,
 	restConfig *rest.Config, targetNamespace string) KubernetesApiService {
 
 	return &KubernetesApiServiceImpl{clientset: clientset,
@@ -45,7 +45,7 @@ func NewKubernetesApiService(clientset *kubernetes.Clientset,
 
 func (k *KubernetesApiServiceImpl) ExecuteCommand(ctx context.Context, podName string, containerName string, command []string, stdOut io.Writer) (int, error) {
 
-	log.Infof("executing command: '%s' on container: '%s', pod: '%s', namespace: '%s'", command, containerName, podName, k.targetNamespace)
+	slog.Debug("executing command", "command", command, "container", containerName, "pod", podName, "namespace", k.targetNamespace)
 	stdErr := new(Writer)
 
 	executeTcpdumpRequest := ExecCommandRequest{
@@ -64,13 +64,11 @@ func (k *KubernetesApiServiceImpl) ExecuteCommand(ctx context.Context, podName s
 
 	exitCode, err := PodExecuteCommand(executeTcpdumpRequest)
 	if err != nil {
-		log.WithError(err).Errorf("failed executing command: '%s', exitCode: '%d', stdErr: '%s'",
-			command, exitCode, stdErr.Output)
-
+		slog.Error("failed executing command", "error", err, "command", command, "exitCode", exitCode, "stderr", stdErr.Output)
 		return exitCode, err
 	}
 
-	log.Infof("command: '%s' executing successfully exitCode: '%d', stdErr :'%s'", command, exitCode, stdErr.Output)
+	slog.Debug("command executed", "command", command, "exitCode", exitCode, "stderr", stdErr.Output)
 
 	return exitCode, err
 }
@@ -90,7 +88,7 @@ func (k *KubernetesApiServiceImpl) IsSupportedContainerRuntime(nodeName string) 
 }
 
 func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containerName string, image string, socketPath string, timeout time.Duration, serviceAccount string) (*corev1.Pod, error) {
-	log.Debugf("creating privileged pod on remote node")
+	slog.Debug("creating privileged pod on remote node")
 
 	isSupported, err := k.IsSupportedContainerRuntime(nodeName)
 	if err != nil {
@@ -168,14 +166,14 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containe
 		return nil, err
 	}
 
-	log.Infof("pod: '%v' created successfully in namespace: '%v'", createdPod.Name, createdPod.Namespace)
+	slog.Info("pod created", "pod", createdPod.Name, "namespace", createdPod.Namespace)
 
 	verifyRunning := func() bool {
 		p, err := k.clientset.CoreV1().Pods(k.targetNamespace).Get(context.TODO(), createdPod.Name, v1.GetOptions{})
 		return err == nil && p.Status.Phase == corev1.PodRunning
 	}
 
-	log.Info("waiting for privileged pod to start")
+	slog.Info("waiting for privileged pod to start")
 
 	if !utils.RunWhileFalse(verifyRunning, timeout, 1*time.Second) {
 		return nil, fmt.Errorf("privileged pod did not reach Running state within %s", timeout)
@@ -189,7 +187,7 @@ func hostPathType(t corev1.HostPathType) *corev1.HostPathType {
 }
 
 func (k *KubernetesApiServiceImpl) DeletePod(podName string) error {
-	var gracePeriod int64 = 0
+	var gracePeriod int64 = 30
 	return k.clientset.CoreV1().Pods(k.targetNamespace).Delete(context.TODO(), podName, v1.DeleteOptions{
 		GracePeriodSeconds: &gracePeriod,
 	})
@@ -214,13 +212,13 @@ func (k *KubernetesApiServiceImpl) checkIfFileExistOnPod(remotePath string, podN
 		return false, errors.New("failed to check for tcpdump on remote pod")
 	}
 
-	log.Infof("file found: '%s'", stdOut.Output)
+	slog.Info("file found on pod", "path", stdOut.Output)
 
 	return true, nil
 }
 
 func (k *KubernetesApiServiceImpl) UploadFile(localPath string, remotePath string, podName string, containerName string) error {
-	log.Infof("uploading file: '%s' to '%s' on container: '%s'", localPath, remotePath, containerName)
+	slog.Info("uploading file", "src", localPath, "dst", remotePath, "container", containerName)
 
 	isExist, err := k.checkIfFileExistOnPod(remotePath, podName, containerName)
 	if err != nil {
@@ -228,11 +226,11 @@ func (k *KubernetesApiServiceImpl) UploadFile(localPath string, remotePath strin
 	}
 
 	if isExist {
-		log.Info("file was already found on remote pod")
+		slog.Info("file already present on remote pod")
 		return nil
 	}
 
-	log.Infof("file not found on: '%s', starting to upload", remotePath)
+	slog.Info("file not found on remote pod, uploading", "path", remotePath)
 
 	req := UploadFileRequest{
 		KubeRequest: KubeRequest{
@@ -251,7 +249,7 @@ func (k *KubernetesApiServiceImpl) UploadFile(localPath string, remotePath strin
 		return fmt.Errorf("upload file failed, exitCode: %d: %w", exitCode, err)
 	}
 
-	log.Info("verifying file uploaded successfully")
+	slog.Info("verifying file uploaded successfully")
 
 	isExist, err = k.checkIfFileExistOnPod(remotePath, podName, containerName)
 	if err != nil {
@@ -259,11 +257,11 @@ func (k *KubernetesApiServiceImpl) UploadFile(localPath string, remotePath strin
 	}
 
 	if !isExist {
-		log.Error("failed to upload file.")
+		slog.Error("failed to locate file on pod after upload")
 		return errors.New("couldn't locate file on pod after upload")
 	}
 
-	log.Info("file uploaded successfully")
+	slog.Info("file uploaded successfully")
 
 	return nil
 }

@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
+	"strings"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -22,15 +23,19 @@ const (
 	ephemeralContainerPollInterval = 2 * time.Second
 )
 
+// DefaultTCPDumpImage is the default image used for ephemeral-mode sniffing.
+// Override at build time: -ldflags "-X ksniff/pkg/service/sniffer.DefaultTCPDumpImage=ghcr.io/owner/ksniff-tcpdump:v1.0.0"
+var DefaultTCPDumpImage = "ghcr.io/nyralei/ksniff-tcpdump:latest"
+
 type EphemeralContainerSnifferService struct {
 	settings               *config.KsniffSettings
-	clientset              *kubernetes.Clientset
+	clientset              kubernetes.Interface
 	restConfig             *rest.Config
 	targetNamespace        string
 	ephemeralContainerName string
 }
 
-func NewEphemeralContainerSnifferService(settings *config.KsniffSettings, clientset *kubernetes.Clientset, restConfig *rest.Config, namespace string) SnifferService {
+func NewEphemeralContainerSnifferService(settings *config.KsniffSettings, clientset kubernetes.Interface, restConfig *rest.Config, namespace string) SnifferService {
 	return &EphemeralContainerSnifferService{
 		settings:        settings,
 		clientset:       clientset,
@@ -39,11 +44,11 @@ func NewEphemeralContainerSnifferService(settings *config.KsniffSettings, client
 	}
 }
 
-func (e *EphemeralContainerSnifferService) Setup() error {
+func (e *EphemeralContainerSnifferService) Setup(ctx context.Context) error {
 	e.ephemeralContainerName = ephemeralContainerPrefix + utils.GenerateRandomString(8)
-	log.Infof("adding ephemeral container '%s' to pod '%s'", e.ephemeralContainerName, e.settings.UserSpecifiedPodName)
+	slog.Info("adding ephemeral container", "container", e.ephemeralContainerName, "pod", e.settings.UserSpecifiedPodName)
 
-	pod, err := e.clientset.CoreV1().Pods(e.targetNamespace).Get(context.Background(), e.settings.UserSpecifiedPodName, v1.GetOptions{})
+	pod, err := e.clientset.CoreV1().Pods(e.targetNamespace).Get(ctx, e.settings.UserSpecifiedPodName, v1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get pod '%s': %w", e.settings.UserSpecifiedPodName, err)
 	}
@@ -69,12 +74,12 @@ func (e *EphemeralContainerSnifferService) Setup() error {
 	pod.Spec.EphemeralContainers = append(pod.Spec.EphemeralContainers, ephemeralContainer)
 
 	_, err = e.clientset.CoreV1().Pods(e.targetNamespace).UpdateEphemeralContainers(
-		context.Background(), e.settings.UserSpecifiedPodName, pod, v1.UpdateOptions{})
+		ctx, e.settings.UserSpecifiedPodName, pod, v1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to add ephemeral container: %w", err)
 	}
 
-	log.Infof("ephemeral container added; waiting for it to start")
+	slog.Info("ephemeral container added; waiting for it to start")
 	timeout := e.settings.UserSpecifiedPodCreateTimeout
 	if timeout == 0 {
 		timeout = 2 * time.Minute
@@ -84,7 +89,7 @@ func (e *EphemeralContainerSnifferService) Setup() error {
 		return fmt.Errorf("ephemeral container '%s' did not reach Running state within %s", e.ephemeralContainerName, timeout)
 	}
 
-	log.Infof("ephemeral container '%s' is running", e.ephemeralContainerName)
+	slog.Info("ephemeral container is running", "container", e.ephemeralContainerName)
 	return nil
 }
 
@@ -102,7 +107,7 @@ func (e *EphemeralContainerSnifferService) isEphemeralContainerRunning() bool {
 }
 
 func (e *EphemeralContainerSnifferService) Start(ctx context.Context, stdOut io.Writer) error {
-	log.Infof("starting tcpdump in ephemeral container '%s'", e.ephemeralContainerName)
+	slog.Info("starting tcpdump in ephemeral container", "container", e.ephemeralContainerName)
 
 	command := []string{"tcpdump", "-i", e.settings.UserSpecifiedInterface, "-U", "-w", "-", e.settings.UserSpecifiedFilter}
 
@@ -117,7 +122,7 @@ func (e *EphemeralContainerSnifferService) Start(ctx context.Context, stdOut io.
 		Context: ctx,
 		Command: command,
 		StdOut:  stdOut,
-		StdErr:  log.StandardLogger().Writer(),
+		StdErr:  &slogLineWriter{level: slog.LevelDebug},
 	}
 
 	exitCode, err := kube.PodExecuteCommand(req)
@@ -127,14 +132,14 @@ func (e *EphemeralContainerSnifferService) Start(ctx context.Context, stdOut io.
 	return nil
 }
 
-func (e *EphemeralContainerSnifferService) Cleanup() error {
+func (e *EphemeralContainerSnifferService) Cleanup(ctx context.Context) error {
 	if e.ephemeralContainerName == "" {
 		return nil
 	}
 	// Ephemeral containers cannot be removed from a pod's spec, but killing all
 	// processes inside causes the kubelet to mark the container as Terminated,
 	// leaving the pod otherwise unaffected.
-	log.Infof("terminating ephemeral container '%s' (best-effort)", e.ephemeralContainerName)
+	slog.Info("terminating ephemeral container (best-effort)", "container", e.ephemeralContainerName)
 	req := kube.ExecCommandRequest{
 		KubeRequest: kube.KubeRequest{
 			Clientset:  e.clientset,
@@ -143,8 +148,9 @@ func (e *EphemeralContainerSnifferService) Cleanup() error {
 			Pod:        e.settings.UserSpecifiedPodName,
 			Container:  e.ephemeralContainerName,
 		},
+		Context: ctx,
 		Command: []string{"kill", "-TERM", "1"},
-		StdErr:  log.StandardLogger().Writer(),
+		StdErr:  &slogLineWriter{level: slog.LevelDebug},
 	}
 	_, _ = kube.PodExecuteCommand(req)
 	return nil
@@ -154,5 +160,17 @@ func (e *EphemeralContainerSnifferService) tcpdumpImage() string {
 	if !e.settings.UseDefaultTCPDumpImage {
 		return e.settings.TCPDumpImage
 	}
-	return "ghcr.io/nyralei/ksniff-tcpdump:latest"
+	return DefaultTCPDumpImage
+}
+
+// slogLineWriter routes line-buffered output (e.g. tcpdump stderr) into slog.
+type slogLineWriter struct {
+	level slog.Level
+}
+
+func (w *slogLineWriter) Write(p []byte) (int, error) {
+	if msg := strings.TrimRight(string(p), "\n\r"); msg != "" {
+		slog.Log(context.Background(), w.level, msg)
+	}
+	return len(p), nil
 }

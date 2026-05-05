@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-
-	log "github.com/sirupsen/logrus"
+	"log/slog"
 
 	"ksniff/kube"
 	"ksniff/pkg/config"
@@ -20,29 +19,31 @@ func NewUploadTcpdumpRemoteSniffingService(options *config.KsniffSettings, servi
 	return &StaticTcpdumpSnifferService{settings: options, kubernetesApiService: service}
 }
 
-func (u *StaticTcpdumpSnifferService) Setup() error {
-	log.Infof("uploading static tcpdump binary from: '%s' to: '%s'",
-		u.settings.UserSpecifiedLocalTcpdumpPath, u.settings.UserSpecifiedRemoteTcpdumpPath)
+func (u *StaticTcpdumpSnifferService) Setup(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	slog.Info("uploading static tcpdump binary", "src", u.settings.UserSpecifiedLocalTcpdumpPath, "dst", u.settings.UserSpecifiedRemoteTcpdumpPath)
 
 	err := u.kubernetesApiService.UploadFile(u.settings.UserSpecifiedLocalTcpdumpPath,
 		u.settings.UserSpecifiedRemoteTcpdumpPath, u.settings.UserSpecifiedPodName, u.settings.UserSpecifiedContainer)
 
 	if err != nil {
-		log.WithError(err).Errorf("failed uploading static tcpdump binary to container, please verify the remote container has tar installed")
+		slog.Error("failed uploading static tcpdump binary; verify the container has tar installed", "error", err)
 		return err
 	}
 
-	log.Info("tcpdump uploaded successfully")
+	slog.Info("tcpdump uploaded successfully")
 
 	return nil
 }
 
-func (u *StaticTcpdumpSnifferService) Cleanup() error {
+func (u *StaticTcpdumpSnifferService) Cleanup(_ context.Context) error {
 	return nil
 }
 
 func (u *StaticTcpdumpSnifferService) Start(ctx context.Context, stdOut io.Writer) error {
-	log.Info("start sniffing on remote container")
+	slog.Info("starting sniffing on remote container")
 
 	command := []string{u.settings.UserSpecifiedRemoteTcpdumpPath, "-i", u.settings.UserSpecifiedInterface,
 		"-U", "-w", "-", u.settings.UserSpecifiedFilter}
@@ -52,7 +53,7 @@ func (u *StaticTcpdumpSnifferService) Start(ctx context.Context, stdOut io.Write
 		return fmt.Errorf("executing sniffer failed, exit code: '%d'", exitCode)
 	}
 
-	log.Infof("done sniffing on remote container")
+	slog.Info("done sniffing on remote container")
 
 	return nil
 }

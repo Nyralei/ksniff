@@ -41,10 +41,7 @@ jobs:
       - name: Run ksniff ephemeral mode
         run: |
           kubectl config use-context k3d-test-cluster-1
-          sleep 60 && pkill kubectl-sniff &
-          set +e
-          ./kubectl-sniff busybox-sleep --mode ephemeral --namespace default --output-file /tmp/output-ephem.pcap
-          set -e
+          timeout 90 ./kubectl-sniff busybox-sleep --mode ephemeral --namespace default --output-file /tmp/output-ephem.pcap || true
           if [ ! -f /tmp/output-ephem.pcap ]; then
             echo "PCAP not created (ephemeral mode)"
             exit 1
@@ -68,7 +65,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Setup Minikube
-        uses: medyagh/setup-minikube@latest
+        uses: medyagh/setup-minikube@v0.0.19
         with:
           kubernetes-version: v1.31.0
           driver: docker
@@ -85,10 +82,7 @@ jobs:
 
       - name: Run ksniff ephemeral mode
         run: |
-          sleep 60 && pkill kubectl-sniff &
-          set +e
-          ./kubectl-sniff busybox-sleep --mode ephemeral --namespace default --output-file /tmp/output-ephem.pcap
-          set -e
+          timeout 90 ./kubectl-sniff busybox-sleep --mode ephemeral --namespace default --output-file /tmp/output-ephem.pcap || true
           if [ ! -f /tmp/output-ephem.pcap ]; then
             echo "PCAP not created (ephemeral mode)"
             exit 1
@@ -111,7 +105,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Setup Minikube
-        uses: medyagh/setup-minikube@latest
+        uses: medyagh/setup-minikube@v0.0.19
         with:
           kubernetes-version: v1.31.0
           driver: docker
@@ -129,10 +123,7 @@ jobs:
 
       - name: Run ksniff ephemeral mode
         run: |
-          sleep 60 && pkill kubectl-sniff &
-          set +e
-          ./kubectl-sniff busybox-sleep --mode ephemeral --namespace default --output-file /tmp/output-ephem.pcap
-          set -e
+          timeout 90 ./kubectl-sniff busybox-sleep --mode ephemeral --namespace default --output-file /tmp/output-ephem.pcap || true
           if [ ! -f /tmp/output-ephem.pcap ]; then
             echo "PCAP not created (ephemeral mode)"
             exit 1

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 
-	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 
 	"ksniff/kube"
@@ -26,8 +26,8 @@ func NewPrivilegedPodRemoteSniffingService(options *config.KsniffSettings, servi
 	return &PrivilegedPodSnifferService{settings: options, privilegedContainerName: "ksniff-privileged", kubernetesApiService: service, runtimeBridge: bridge}
 }
 
-func (p *PrivilegedPodSnifferService) Setup() error {
-	log.Infof("creating privileged pod on node: '%s'", p.settings.DetectedPodNodeName)
+func (p *PrivilegedPodSnifferService) Setup(ctx context.Context) error {
+	slog.Info("creating privileged pod", "node", p.settings.DetectedPodNodeName)
 
 	if p.settings.UseDefaultImage {
 		p.settings.Image = p.runtimeBridge.GetDefaultImage()
@@ -49,18 +49,18 @@ func (p *PrivilegedPodSnifferService) Setup() error {
 		p.settings.UserSpecifiedServiceAccount,
 	)
 	if err != nil {
-		log.WithError(err).Errorf("failed to create privileged pod on node: '%s'", p.settings.DetectedPodNodeName)
+		slog.Error("failed to create privileged pod", "error", err, "node", p.settings.DetectedPodNodeName)
 		return err
 	}
 
-	log.Infof("pod: '%s' created successfully on node: '%s'", p.privilegedPod.Name, p.settings.DetectedPodNodeName)
+	slog.Info("privileged pod created", "pod", p.privilegedPod.Name, "node", p.settings.DetectedPodNodeName)
 
 	if p.runtimeBridge.NeedsPid() {
 		var buff bytes.Buffer
 		command := p.runtimeBridge.BuildInspectCommand(p.settings.DetectedContainerId)
-		exitCode, err := p.kubernetesApiService.ExecuteCommand(context.Background(), p.privilegedPod.Name, p.privilegedContainerName, command, &buff)
+		exitCode, err := p.kubernetesApiService.ExecuteCommand(ctx, p.privilegedPod.Name, p.privilegedContainerName, command, &buff)
 		if err != nil {
-			log.WithError(err).Errorf("failed to inspect container, exit code: '%d'", exitCode)
+			slog.Error("failed to inspect container", "error", err, "exitCode", exitCode)
 			return err
 		}
 		p.targetProcessId, err = p.runtimeBridge.ExtractPid(buff.String())
@@ -72,34 +72,34 @@ func (p *PrivilegedPodSnifferService) Setup() error {
 	return nil
 }
 
-func (p *PrivilegedPodSnifferService) Cleanup() error {
+func (p *PrivilegedPodSnifferService) Cleanup(ctx context.Context) error {
 	command := p.runtimeBridge.BuildCleanupCommand()
 
 	if command != nil {
-		log.Infof("removing privileged container: '%s'", p.privilegedContainerName)
-		exitCode, err := p.kubernetesApiService.ExecuteCommand(context.Background(), p.privilegedPod.Name, p.privilegedContainerName, command, &kube.NopWriter{})
+		slog.Info("removing privileged container", "container", p.privilegedContainerName)
+		exitCode, err := p.kubernetesApiService.ExecuteCommand(ctx, p.privilegedPod.Name, p.privilegedContainerName, command, &kube.NopWriter{})
 		if err != nil {
-			log.WithError(err).Errorf("failed to remove privileged container: '%s', exit code: '%d', "+
-				"please manually remove it", p.privilegedContainerName, exitCode)
+			slog.Error("failed to remove privileged container; please remove manually",
+				"error", err, "container", p.privilegedContainerName, "exitCode", exitCode)
 		} else {
-			log.Infof("privileged container: '%s' removed successfully", p.privilegedContainerName)
+			slog.Info("privileged container removed", "container", p.privilegedContainerName)
 		}
 	}
 
 	if p.privilegedPod != nil {
-		log.Infof("removing pod: '%s'", p.privilegedPod.Name)
+		slog.Info("removing privileged pod", "pod", p.privilegedPod.Name)
 		if err := p.kubernetesApiService.DeletePod(p.privilegedPod.Name); err != nil {
-			log.WithError(err).Errorf("failed to remove pod: '%s'", p.privilegedPod.Name)
+			slog.Error("failed to remove privileged pod", "error", err, "pod", p.privilegedPod.Name)
 			return err
 		}
-		log.Infof("pod: '%s' removed successfully", p.privilegedPod.Name)
+		slog.Info("privileged pod removed", "pod", p.privilegedPod.Name)
 	}
 
 	return nil
 }
 
 func (p *PrivilegedPodSnifferService) Start(ctx context.Context, stdOut io.Writer) error {
-	log.Info("starting remote sniffing using privileged pod")
+	slog.Info("starting remote sniffing using privileged pod")
 
 	command := p.runtimeBridge.BuildTcpdumpCommand(
 		&p.settings.DetectedContainerId,
@@ -112,10 +112,10 @@ func (p *PrivilegedPodSnifferService) Start(ctx context.Context, stdOut io.Write
 
 	exitCode, err := p.kubernetesApiService.ExecuteCommand(ctx, p.privilegedPod.Name, p.privilegedContainerName, command, stdOut)
 	if err != nil {
-		log.WithError(err).Errorf("failed to start sniffing using privileged pod, exit code: '%d'", exitCode)
+		slog.Error("failed to start sniffing using privileged pod", "error", err, "exitCode", exitCode)
 		return err
 	}
 
-	log.Info("remote sniffing using privileged pod completed")
+	slog.Info("remote sniffing using privileged pod completed")
 	return nil
 }
