@@ -29,20 +29,23 @@ func (c *CrioBridge) ExtractPid(inspection string) (*string, error) {
 		return nil, err
 	}
 
-	var pid float64
-	var err error
+	var (
+		pid float64
+		err error
+	)
 
-	if result["pid"] != nil {
+	switch {
+	case result["pid"] != nil:
 		pid, err = extractPidCrio117(result)
 		if err != nil {
 			return nil, fmt.Errorf("error getting container PID from CRI-O: %w", err)
 		}
-	} else if result["info"] != nil {
+	case result["info"] != nil:
 		pid, err = extractPidCrio118(result)
 		if err != nil {
 			return nil, fmt.Errorf("error getting container PID from CRI-O: %w", err)
 		}
-	} else {
+	default:
 		return nil, errors.New("unable to identify CRI-O version")
 	}
 

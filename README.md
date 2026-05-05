@@ -1,116 +1,112 @@
 # ksniff
 
-[![Build Status](https://travis-ci.org/eldadru/ksniff.svg?branch=master)](https://travis-ci.org/eldadru/ksniff)
+[![unit-test](https://github.com/Nyralei/ksniff/actions/workflows/unit-test.yml/badge.svg)](https://github.com/Nyralei/ksniff/actions/workflows/unit-test.yml)
+[![lint](https://github.com/Nyralei/ksniff/actions/workflows/lint.yml/badge.svg)](https://github.com/Nyralei/ksniff/actions/workflows/lint.yml)
 
-A kubectl plugin that utilize tcpdump and Wireshark to start a remote capture on any pod in your
- Kubernetes cluster.
-
-You get the full power of Wireshark with minimal impact on your running pods.
+A kubectl plugin that uses tcpdump and Wireshark to start a remote packet capture on any pod in your Kubernetes cluster.
 
 ### Intro
 
-When working with micro-services, many times it's very helpful to get a capture of the network
-activity between your micro-service and it's dependencies.
-
-ksniff use kubectl to upload a statically compiled tcpdump binary to your pod and redirecting it's
-output to your local Wireshark for smooth network debugging experience.
+When working with micro-services, it's often very helpful to capture network traffic between your service and its dependencies. ksniff attaches tcpdump to the target pod and streams the output to your local Wireshark for smooth network debugging.
 
 ### Demo
 ![Demo!](https://i.imgur.com/hWtF9r2.gif)
 
-### Production Readiness
-Ksniff [isn't production ready yet](https://github.com/eldadru/ksniff/issues/96#issuecomment-762454991), running ksniff for production workloads isn't recommended at this point.
-
 ## Installation
-Installation via krew (https://github.com/GoogleContainerTools/krew)
+
+Via [krew](https://krew.sigs.k8s.io/):
 
     kubectl krew install sniff
-    
-For manual installation, download the latest release package, unzip it and use the attached makefile:  
 
-    unzip ksniff.zip
-    make install
+Manual installation: download the latest release for your platform from the [releases page](https://github.com/Nyralei/ksniff/releases), extract, and place `kubectl-sniff` on your `$PATH`.
 
 ### Wireshark
 
-If you are using Wireshark with ksniff you must use at least version 3.4.0. Using older versions may result in issues reading captures (see [Known Issues](#known-issues) below).
+ksniff requires Wireshark **3.4.0 or newer**. Older versions cannot read the capture format produced by tcpdump. On Ubuntu LTS, use the [Wireshark PPA](https://launchpad.net/~wireshark-dev/+archive/ubuntu/stable) if the stock package is too old.
+
+## Usage
+
+    kubectl sniff <POD_NAME> [-n NAMESPACE] [-c CONTAINER] [-i INTERFACE] [-f FILTER]
+                             [-o OUTPUT_FILE] [--mode MODE]
+
+| Flag | Default | Description |
+|---|---|---|
+| `-n` | current namespace | Namespace of the target pod |
+| `-c` | first container | Container to sniff |
+| `-i` | `any` | Network interface to capture on |
+| `-f` | _(none)_ | tcpdump capture filter |
+| `-o` | _(Wireshark)_ | Write capture to file instead of opening Wireshark. Use `-` for stdout |
+| `--mode` | `upload` | Sniffing mode: `upload`, `ephemeral`, or `privileged` |
+| `-v` | false | Verbose / debug output |
+
+### Sniffing Modes
+
+#### `upload` (default)
+
+Uploads a statically compiled tcpdump binary to the target container and runs it there. Works with any container that has `tar` installed. Requires a local static-tcpdump binary (see [Build](#build)).
+
+    kubectl sniff my-pod -n my-namespace
+
+#### `ephemeral`
+
+Adds a tcpdump [ephemeral container](https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/) to the target pod. Does not touch the target container at all.
+
+**Requirements:** Kubernetes 1.25+, `update` permission on `pods/ephemeralcontainers`.
+
+    kubectl sniff my-pod --mode ephemeral
+
+#### `privileged`
+
+Deploys a short-lived privileged pod on the same node as the target pod and uses the container runtime socket to attach to the target container's network namespace. Useful when the target container is scratch or non-privileged and ephemeral containers are not available.
+
+**Supported runtimes:** containerd, docker, cri-o.
+
+Additional flags for privileged mode:
+
+| Flag | Description |
+|---|---|
+| `--socket` | Container runtime socket path (auto-detected if omitted) |
+| `--image` | Privileged helper container image (auto-detected if omitted) |
+| `--tcpdump-image` | tcpdump image (auto-detected if omitted) |
+| `-s` / `--serviceaccount` | Service account for the privileged pod |
+| `--pod-creation-timeout` | How long to wait for the privileged pod to start (default 1m) |
+
+    kubectl sniff my-pod --mode privileged --socket /run/containerd/containerd.sock
+
+### Pipe to stdout
+
+Use `-o -` to pipe raw pcap data to another tool instead of Wireshark:
+
+    kubectl sniff my-pod -f "port 80" -o - | tshark -r -
 
 ## Build
 
-Requirements:
-1. libpcap-dev: for tcpdump compilation (Ubuntu: sudo apt-get install libpcap-dev)
-2. go 1.11 or newer
+Requirements: Go 1.23+
 
-Compiling:
- 
-    linux:      make linux
-    windows:    make windows
-    mac:        make darwin
- 
+    make linux      # linux/amd64
+    make windows
+    make darwin
 
-To compile a static tcpdump binary:
+To build a static tcpdump binary (for upload mode):
 
     make static-tcpdump
 
-### Usage
+To build and push the tcpdump sidecar image:
 
-    kubectl < 1.12:
-    kubectl plugin sniff <POD_NAME> [-n <NAMESPACE_NAME>] [-c <CONTAINER_NAME>] [-i <INTERFACE_NAME>] [-f <CAPTURE_FILTER>] [-o OUTPUT_FILE] [-l LOCAL_TCPDUMP_FILE] [-r REMOTE_TCPDUMP_FILE]
-    
-    kubectl >= 1.12:
-    kubectl sniff <POD_NAME> [-n <NAMESPACE_NAME>] [-c <CONTAINER_NAME>] [-i <INTERFACE_NAME>] [-f <CAPTURE_FILTER>] [-o OUTPUT_FILE] [-l LOCAL_TCPDUMP_FILE] [-r REMOTE_TCPDUMP_FILE]
-    
-    POD_NAME: Required. the name of the kubernetes pod to start capture it's traffic.
-    NAMESPACE_NAME: Optional. Namespace name. used to specify the target namespace to operate on.
-    CONTAINER_NAME: Optional. If omitted, the first container in the pod will be chosen.
-    INTERFACE_NAME: Optional. Pod Interface to capture from. If omitted, all Pod interfaces will be captured.
-    CAPTURE_FILTER: Optional. specify a specific tcpdump capture filter. If omitted no filter will be used.
-    OUTPUT_FILE: Optional. if specified, ksniff will redirect tcpdump output to local file instead of wireshark. Use '-' for stdout.
-    LOCAL_TCPDUMP_FILE: Optional. if specified, ksniff will use this path as the local path of the static tcpdump binary.
-    REMOTE_TCPDUMP_FILE: Optional. if specified, ksniff will use the specified path as the remote path to upload static tcpdump to.
+    make image-push IMAGE_REPO=ghcr.io/youruser/ksniff-tcpdump
 
-#### Air gapped environments
-Use `--image` and `--tcpdump-image` flags (or KUBECTL_PLUGINS_LOCAL_FLAG_IMAGE and KUBECTL_PLUGINS_LOCAL_FLAG_TCPDUMP_IMAGE environment variables) to override the default container images and use your own e.g (docker):
-  
-    kubectl plugin sniff <POD_NAME> [-n <NAMESPACE_NAME>] [-c <CONTAINER_NAME>] --image <PRIVATE_REPO>/docker --tcpdump-image <PRIVATE_REPO>/tcpdump
-   
+## Known Issues
 
-#### Non-Privileged and Scratch Pods
-To reduce attack surface and have small and lean containers, many production-ready containers runs as non-privileged user
-or even as a scratch container.
+### Wireshark / TShark cannot read pcap
 
-To support those containers as well, ksniff now ships with the "-p" (privileged) mode.
-When executed with the -p flag, ksniff will create a new pod on the remote kubernetes cluster that will have access to the node docker daemon.
-
-ksniff will than use that pod to execute a container attached to the target container network namespace 
-and perform the actual network capture.
-
-#### Piping output to stdout
-By default ksniff will attempt to start a local instance of the Wireshark GUI. You can integrate with other tools
-using the `-o -` flag to pipe packet cap data to stdout.
-
-Example using `tshark`:
-
-    kubectl sniff pod-name -f "port 80" -o - | tshark -r -
-
-### Contribution
-More than welcome! please don't hesitate to open bugs, questions, pull requests 
-
-### Future Work
-1. Instead of uploading static tcpdump, use the future support of "kubectl debug" feature
- (https://github.com/kubernetes/community/pull/649) which should be a much cleaner solution.
- 
-### Known Issues
-
-#### Wireshark and TShark cannot read pcap
-
-*Issues [100](https://github.com/eldadru/ksniff/issues/100) and [98](https://github.com/eldadru/ksniff/issues/98)*
-
-Wireshark may show `UNKNOWN` in Protocol column. TShark may report the following in output:
+Wireshark may show `UNKNOWN` in the Protocol column, or TShark may report:
 
 ```
-tshark: The standard input contains record data that TShark doesn't support.
-(pcap: network type 276 unknown or unsupported)
+pcap: network type 276 unknown or unsupported
 ```
 
-This issue happens when using an old version of Wireshark or TShark to read the pcap created by ksniff. Upgrade Wireshark or TShark to resolve this issue. Ubuntu LTS versions may have this problem with stock package versions but using the [Wireshark PPA will help](https://github.com/eldadru/ksniff/issues/100#issuecomment-789503442).
+Upgrade Wireshark/TShark to 3.4.0+. On Ubuntu LTS, use the [Wireshark PPA](https://launchpad.net/~wireshark-dev/+archive/ubuntu/stable).
+
+## Contribution
+
+PRs, bug reports, and questions are welcome — open an issue or pull request.
