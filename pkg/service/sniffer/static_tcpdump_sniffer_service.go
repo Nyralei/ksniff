@@ -2,10 +2,10 @@ package sniffer
 
 import (
 	"io"
+	"fmt"
 	"ksniff/kube"
 	"ksniff/pkg/config"
 
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -47,7 +47,7 @@ func (u *StaticTcpdumpSnifferService) Start(stdOut io.Writer) error {
 
 	exitCode, err := u.kubernetesApiService.ExecuteCommand(u.settings.UserSpecifiedPodName, u.settings.UserSpecifiedContainer, command, stdOut)
 	if err != nil || exitCode != 0 {
-		return errors.Errorf("executing sniffer failed, exit code: '%d'", exitCode)
+		return fmt.Errorf("executing sniffer failed, exit code: '%d'", exitCode)
 	}
 
 	log.Infof("done sniffing on remote container")

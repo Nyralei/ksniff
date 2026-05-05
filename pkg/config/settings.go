@@ -17,19 +17,10 @@ type KsniffSettings struct {
 	UserSpecifiedLocalTcpdumpPath  string
 	UserSpecifiedRemoteTcpdumpPath string
 	UserSpecifiedVerboseMode       bool
-	UserSpecifiedPrivilegedMode    bool
-	UserSpecifiedImage             string
-	DetectedPodNodeName            string
-	DetectedContainerId            string
-	DetectedContainerRuntime       string
-	Image                          string
+	Mode                           string
 	TCPDumpImage                   string
-	UseDefaultImage                bool
 	UseDefaultTCPDumpImage         bool
 	UserSpecifiedKubeContext       string
-	SocketPath                     string
-	UseDefaultSocketPath           bool
-	UserSpecifiedServiceAccount    string
 }
 
 func NewKsniffSettings(streams genericclioptions.IOStreams) *KsniffSettings {

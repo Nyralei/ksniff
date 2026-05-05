@@ -2,7 +2,7 @@ package utils
 
 import (
 	"context"
-	"math/rand"
+	"math/rand/v2"
 	"time"
 )
 
@@ -14,7 +14,7 @@ func RunWhileFalse(fn func() bool, timeout time.Duration, delay time.Duration) b
 	}
 
 	// Timeout 0 is infinite timeout
-	if (timeout == 0) {
+	if timeout == 0 {
 		ctx, cancel = context.WithCancel(context.Background())
 	} else {
 		ctx, cancel = context.WithTimeout(context.Background(), timeout)
@@ -38,15 +38,10 @@ func RunWhileFalse(fn func() bool, timeout time.Duration, delay time.Duration) b
 }
 
 func GenerateRandomString(length int) string {
-
-	rand.Seed(time.Now().UnixNano())
-
-	var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-	b := make([]rune, length)
+	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, length)
 	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+		b[i] = letters[rand.IntN(len(letters))]
 	}
-
 	return string(b)
 }

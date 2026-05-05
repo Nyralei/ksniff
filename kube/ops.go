@@ -2,8 +2,9 @@ package kube
 
 import (
 	"bytes"
+	"context"
 	"io"
-	"io/ioutil"
+	"os"
 	"path"
 
 	log "github.com/sirupsen/logrus"
@@ -31,12 +32,6 @@ type ExecCommandRequest struct {
 	StdErr  io.Writer
 }
 
-type UploadFileRequest struct {
-	KubeRequest
-	Src string
-	Dst string
-}
-
 func (w *NopWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
@@ -56,13 +51,19 @@ type Writer struct {
 	Output string
 }
 
+type UploadFileRequest struct {
+	KubeRequest
+	Src string
+	Dst string
+}
+
 func PodUploadFile(req UploadFileRequest) (int, error) {
 	stdOut := new(Writer)
 	stdErr := new(Writer)
 
 	log.Debugf("uploading file from: '%s' to '%s'", req.Src, req.Dst)
 
-	fileContent, err := ioutil.ReadFile(req.Src)
+	fileContent, err := os.ReadFile(req.Src)
 	if err != nil {
 		return 0, err
 	}
@@ -132,7 +133,7 @@ func PodExecuteCommand(req ExecCommandRequest) (int, error) {
 		return 0, err
 	}
 
-	err = exec.Stream(remotecommand.StreamOptions{
+	err = exec.StreamWithContext(context.Background(), remotecommand.StreamOptions{
 		Stdin:  req.StdIn,
 		Stdout: req.StdOut,
 		Stderr: req.StdErr,

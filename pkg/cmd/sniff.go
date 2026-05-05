@@ -2,23 +2,20 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"ksniff/kube"
 	"ksniff/pkg/config"
 	"ksniff/pkg/service/sniffer"
-	"ksniff/pkg/service/sniffer/runtime"
 
-	"github.com/mitchellh/go-homedir"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -121,19 +118,14 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 	_ = viper.BindEnv("verbose", "KUBECTL_PLUGINS_LOCAL_FLAG_VERBOSE")
 	_ = viper.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
 
-	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedPrivilegedMode, "privileged", "p", false,
-		"if specified, ksniff will deploy another pod that have privileges to attach target pod network namespace")
-	_ = viper.BindEnv("privileged", "KUBECTL_PLUGINS_LOCAL_FLAG_PRIVILEGED")
-	_ = viper.BindPFlag("privileged", cmd.Flags().Lookup("privileged"))
+	cmd.Flags().StringVarP(&ksniffSettings.Mode, "mode", "", "upload",
+		"sniffing mode: upload (default) or ephemeral")
+	_ = viper.BindEnv("mode", "KSNIFF_MODE")
+	_ = viper.BindPFlag("mode", cmd.Flags().Lookup("mode"))
 
 	cmd.Flags().DurationVarP(&ksniffSettings.UserSpecifiedPodCreateTimeout, "pod-creation-timeout", "",
-		1*time.Minute, "the length of time to wait for privileged pod to be created (e.g. 20s, 2m, 1h). "+
-			"A value of zero means the creation never times out.")
-
-	cmd.Flags().StringVarP(&ksniffSettings.Image, "image", "", "",
-		"the privileged container image (optional)")
-	_ = viper.BindEnv("image", "KUBECTL_PLUGINS_LOCAL_FLAG_IMAGE")
-	_ = viper.BindPFlag("image", cmd.Flags().Lookup("image"))
+		1*time.Minute, "the length of time to wait for the ephemeral container to start (e.g. 20s, 2m, 1h). "+
+			"A value of zero means it never times out.")
 
 	cmd.Flags().StringVarP(&ksniffSettings.TCPDumpImage, "tcpdump-image", "", "",
 		"the tcpdump container image (optional)")
@@ -144,16 +136,6 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 		"kubectl context to work on (optional)")
 	_ = viper.BindEnv("context", "KUBECTL_PLUGINS_CURRENT_CONTEXT")
 	_ = viper.BindPFlag("context", cmd.Flags().Lookup("context"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.SocketPath, "socket", "", "",
-		"the container runtime socket path (optional)")
-	_ = viper.BindEnv("socket", "KUBECTL_PLUGINS_SOCKET_PATH")
-	_ = viper.BindPFlag("socket", cmd.Flags().Lookup("socket"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedServiceAccount, "serviceaccount", "s", "",
-		"the privileged container service account (optional)")
-	_ = viper.BindEnv("serviceaccount", "KUBECTL_PLUGINS_LOCAL_FLAG_SERVICE_ACCOUNT")
-	_ = viper.BindPFlag("serviceaccount", cmd.Flags().Lookup("serviceaccount"))
 
 	return cmd
 }
@@ -167,7 +149,7 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 
 	o.settings.UserSpecifiedPodName = args[0]
 	if o.settings.UserSpecifiedPodName == "" {
-		return errors.New("pod name is empty")
+		return errors.New("pod name is empty; provide a pod name as the first argument")
 	}
 
 	o.settings.UserSpecifiedNamespace = viper.GetString("namespace")
@@ -178,15 +160,9 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 	o.settings.UserSpecifiedLocalTcpdumpPath = viper.GetString("local-tcpdump-path")
 	o.settings.UserSpecifiedRemoteTcpdumpPath = viper.GetString("remote-tcpdump-path")
 	o.settings.UserSpecifiedVerboseMode = viper.GetBool("verbose")
-	o.settings.UserSpecifiedPrivilegedMode = viper.GetBool("privileged")
 	o.settings.UserSpecifiedKubeContext = viper.GetString("context")
-	o.settings.Image = viper.GetString("image")
 	o.settings.TCPDumpImage = viper.GetString("tcpdump-image")
-	o.settings.SocketPath = viper.GetString("socket")
-	o.settings.UseDefaultImage = !viper.IsSet("image")
 	o.settings.UseDefaultTCPDumpImage = !viper.IsSet("tcpdump-image")
-	o.settings.UseDefaultSocketPath = !viper.IsSet("socket")
-	o.settings.UserSpecifiedServiceAccount = viper.GetString("serviceaccount")
 
 	var err error
 
@@ -244,7 +220,7 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 }
 
 func (o *Ksniff) buildTcpdumpBinaryPathLookupList() ([]string, error) {
-	userHomeDir, err := homedir.Dir()
+	userHomeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
@@ -269,23 +245,17 @@ func (o *Ksniff) Validate() error {
 	}
 
 	if o.resultingContext.Namespace == "" {
-		return errors.New("namespace value is empty should be custom or default")
+		return errors.New("namespace is empty; specify one with -n or set a default namespace in your kubeconfig")
 	}
 
 	var err error
 
-	if !o.settings.UserSpecifiedPrivilegedMode {
+	if o.settings.Mode == "upload" {
 		o.settings.UserSpecifiedLocalTcpdumpPath, err = findLocalTcpdumpBinaryPath()
 		if err != nil {
 			return err
 		}
-
 		log.Infof("using tcpdump path at: '%s'", o.settings.UserSpecifiedLocalTcpdumpPath)
-	} else if o.settings.UserSpecifiedServiceAccount != "" {
-		_, err := o.clientset.CoreV1().ServiceAccounts(o.resultingContext.Namespace).Get(context.TODO(), o.settings.UserSpecifiedServiceAccount, v1.GetOptions{})
-		if err != nil {
-			return err
-		}
 	}
 
 	pod, err := o.clientset.CoreV1().Pods(o.resultingContext.Namespace).Get(context.TODO(), o.settings.UserSpecifiedPodName, v1.GetOptions{})
@@ -294,15 +264,13 @@ func (o *Ksniff) Validate() error {
 	}
 
 	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-		return errors.Errorf("cannot sniff on a container in a completed pod; current phase is %s", pod.Status.Phase)
+		return fmt.Errorf("cannot sniff on a container in a completed pod; current phase is %s", pod.Status.Phase)
 	}
-
-	o.settings.DetectedPodNodeName = pod.Spec.NodeName
 
 	log.Debugf("pod '%s' status: '%s'", o.settings.UserSpecifiedPodName, pod.Status.Phase)
 
 	if len(pod.Spec.Containers) < 1 {
-		return errors.New("no containers in specified pod")
+		return errors.New("no containers found in the specified pod")
 	}
 
 	if o.settings.UserSpecifiedContainer == "" {
@@ -311,38 +279,18 @@ func (o *Ksniff) Validate() error {
 		log.Infof("selected container: '%s'", o.settings.UserSpecifiedContainer)
 	}
 
-	if err := o.findContainerId(pod); err != nil {
-		return err
-	}
-
 	kubernetesApiService := kube.NewKubernetesApiService(o.clientset, o.restConfig, o.resultingContext.Namespace)
 
-	if o.settings.UserSpecifiedPrivilegedMode {
-		log.Info("sniffing method: privileged pod")
-		bridge := runtime.NewContainerRuntimeBridge(o.settings.DetectedContainerRuntime)
-		o.snifferService = sniffer.NewPrivilegedPodRemoteSniffingService(o.settings, kubernetesApiService, bridge)
-	} else {
+	switch o.settings.Mode {
+	case "ephemeral":
+		log.Info("sniffing method: ephemeral container")
+		o.snifferService = sniffer.NewEphemeralContainerSnifferService(o.settings, o.clientset, o.restConfig, o.resultingContext.Namespace)
+	default:
 		log.Info("sniffing method: upload static tcpdump")
 		o.snifferService = sniffer.NewUploadTcpdumpRemoteSniffingService(o.settings, kubernetesApiService)
 	}
 
 	return nil
-}
-
-func (o *Ksniff) findContainerId(pod *corev1.Pod) error {
-	for _, containerStatus := range pod.Status.ContainerStatuses {
-		if o.settings.UserSpecifiedContainer == containerStatus.Name {
-			result := strings.Split(containerStatus.ContainerID, "://")
-			if len(result) != 2 {
-				break
-			}
-			o.settings.DetectedContainerRuntime = result[0]
-			o.settings.DetectedContainerId = result[1]
-			return nil
-		}
-	}
-
-	return errors.Errorf("couldn't find container: '%s' in pod: '%s'", o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedPodName)
 }
 
 func findLocalTcpdumpBinaryPath() (string, error) {
@@ -358,108 +306,87 @@ func findLocalTcpdumpBinaryPath() (string, error) {
 		log.Debugf("tcpdump binary was not found at: '%s'", possibleTcpdumpPath)
 	}
 
-	return "", errors.Errorf("couldn't find static tcpdump binary on any of: '%v'", tcpdumpLocalBinaryPathLookupList)
-}
-
-func (o *Ksniff) setupSignalHandler() chan interface{} {
-	signals := make(chan os.Signal, 1)
-	exit := make(chan interface{})
-
-	signal.Notify(signals, syscall.SIGINT)
-	go func() {
-		for {
-			select {
-			case sig := <-signals:
-				if sig == syscall.SIGINT || sig == syscall.SIGTERM {
-					log.Info("starting sniffer cleanup")
-					err := o.snifferService.Cleanup()
-					if err != nil {
-						log.WithError(err).Error("failed to teardown sniffer, a manual teardown is required.")
-					}
-					log.Info("sniffer cleanup completed successfully")
-
-					// Kill wireshark if used
-					if o.wireshark != nil {
-						if o.wireshark.Process != nil {
-							err = o.wireshark.Process.Kill()
-							if err != nil && err != os.ErrProcessDone {
-								log.WithError(err).Error("failed to kill wireshark process")
-							} else {
-								log.Debug("wireshark process killed")
-							}
-						}
-					}
-
-					close(signals)
-				}
-			case <-exit:
-				return
-			}
-
-		}
-	}()
-	return exit
+	return "", fmt.Errorf("couldn't find static tcpdump binary on any of: '%v'", tcpdumpLocalBinaryPathLookupList)
 }
 
 func (o *Ksniff) Run() error {
 	log.Infof("sniffing on pod: '%s' [namespace: '%s', container: '%s', filter: '%s', interface: '%s']",
 		o.settings.UserSpecifiedPodName, o.resultingContext.Namespace, o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedFilter, o.settings.UserSpecifiedInterface)
 
-	err := o.snifferService.Setup()
-	if err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := o.snifferService.Setup(); err != nil {
 		return err
 	}
 
-	// Ensure sniffer is clean on interrupt
-	closeHandler := o.setupSignalHandler()
-
-	// Ensure sniffer is clean on complete
+	// Cleanup runs on every exit path: happy, signal, error, panic.
+	// A fresh context is used so SIGINT doesn't abort the cleanup itself.
 	defer func() {
-		closeHandler <- true
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = cleanupCtx // reserved for future ctx-aware Cleanup
+		log.Info("starting sniffer cleanup")
+		if err := o.snifferService.Cleanup(); err != nil {
+			log.WithError(err).Error("cleanup failed; manual teardown may be required")
+		}
 	}()
 
 	if o.settings.UserSpecifiedOutputFile != "" {
 		log.Infof("output file option specified, storing output in: '%s'", o.settings.UserSpecifiedOutputFile)
 
-		var err error
 		var fileWriter io.Writer
-
 		if o.settings.UserSpecifiedOutputFile == "-" {
 			fileWriter = os.Stdout
 		} else {
-			fileWriter, err = os.Create(o.settings.UserSpecifiedOutputFile)
+			f, err := os.Create(o.settings.UserSpecifiedOutputFile)
 			if err != nil {
 				return err
 			}
+			defer f.Close()
+			fileWriter = f
 		}
 
-		err = o.snifferService.Start(fileWriter)
-		if err != nil {
-			return err
-		}
+		return o.snifferService.Start(fileWriter)
+	}
 
-	} else {
-		log.Info("spawning wireshark!")
+	log.Info("spawning wireshark!")
 
-		title := fmt.Sprintf("gui.window_title:%s/%s/%s", o.resultingContext.Namespace, o.settings.UserSpecifiedPodName, o.settings.UserSpecifiedContainer)
-		o.wireshark = exec.Command("wireshark", "-k", "-i", "-", "-o", title)
+	title := fmt.Sprintf("gui.window_title:%s/%s/%s", o.resultingContext.Namespace, o.settings.UserSpecifiedPodName, o.settings.UserSpecifiedContainer)
+	o.wireshark = exec.Command("wireshark", "-k", "-i", "-", "-o", title)
 
-		stdinWriter, err := o.wireshark.StdinPipe()
-		if err != nil {
-			return err
-		}
-
-		go func() {
-			err := o.snifferService.Start(stdinWriter)
-			if err != nil {
-				log.WithError(err).Errorf("failed to start remote sniffing, stopping wireshark")
-				_ = o.wireshark.Process.Kill()
+	defer func() {
+		if o.wireshark != nil && o.wireshark.Process != nil {
+			if err := o.wireshark.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				log.WithError(err).Error("failed to kill wireshark process")
 			}
-		}()
+		}
+	}()
 
-		err = o.wireshark.Run()
+	stdinWriter, err := o.wireshark.StdinPipe()
+	if err != nil {
 		return err
 	}
 
-	return nil
+	sniffDone := make(chan error, 1)
+	go func() {
+		sniffDone <- o.snifferService.Start(stdinWriter)
+	}()
+
+	wiresharkDone := make(chan error, 1)
+	go func() {
+		wiresharkDone <- o.wireshark.Run()
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-sniffDone:
+		if err != nil {
+			log.WithError(err).Error("sniffing stopped unexpectedly")
+		}
+		return err
+	case err := <-wiresharkDone:
+		return err
+	}
 }

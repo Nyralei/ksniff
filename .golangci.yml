@@ -1,0 +1,30 @@
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - gofmt
+    - goimports
+    - gocritic
+    - revive
+  disable:
+    - wrapcheck
+    - exhaustruct
+    - varnamelen
+
+linters-settings:
+  goimports:
+    local-prefixes: ksniff
+  revive:
+    rules:
+      - name: exported
+        disabled: true
+
+issues:
+  exclude-rules:
+    - path: "_test.go"
+      linters:
+        - errcheck
