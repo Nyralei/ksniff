@@ -1,12 +1,13 @@
 package sniffer
 
 import (
-	"io"
 	"fmt"
-	"ksniff/kube"
-	"ksniff/pkg/config"
+	"io"
 
 	log "github.com/sirupsen/logrus"
+
+	"ksniff/kube"
+	"ksniff/pkg/config"
 )
 
 type StaticTcpdumpSnifferService struct {

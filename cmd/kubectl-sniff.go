@@ -1,11 +1,12 @@
 package main
 
 import (
-	"ksniff/pkg/cmd"
 	"os"
 
 	"github.com/spf13/pflag"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+
+	"ksniff/pkg/cmd"
 )
 
 func main() {

@@ -42,7 +42,7 @@ func TestRunWhileFalse_NoTimeout(t *testing.T) {
 
 func TestRunWhileFalse_1SecTimeoutTrue(t *testing.T) {
 	var ret atomic.Bool
-	f := func() bool { return ret.Load() }
+	f := ret.Load
 	time.AfterFunc(1*time.Second, func() { ret.Store(true) })
 
 	assert.True(t, RunWhileFalse(f, 5*time.Second, time.Second))

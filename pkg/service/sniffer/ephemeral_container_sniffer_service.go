@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	ephemeralContainerPrefix  = "ksniff-ephem-"
+	ephemeralContainerPrefix       = "ksniff-ephem-"
 	ephemeralContainerPollInterval = 2 * time.Second
 )
 
