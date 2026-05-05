@@ -2,6 +2,7 @@
 
 [![unit-test](https://github.com/Nyralei/ksniff/actions/workflows/unit-test.yml/badge.svg)](https://github.com/Nyralei/ksniff/actions/workflows/unit-test.yml)
 [![lint](https://github.com/Nyralei/ksniff/actions/workflows/lint.yml/badge.svg)](https://github.com/Nyralei/ksniff/actions/workflows/lint.yml)
+[![e2e](https://github.com/Nyralei/ksniff/actions/workflows/e2e.yml/badge.svg)](https://github.com/Nyralei/ksniff/actions/workflows/e2e.yml)
 
 A kubectl plugin that uses tcpdump and Wireshark to start a remote packet capture on any pod in your Kubernetes cluster.
 

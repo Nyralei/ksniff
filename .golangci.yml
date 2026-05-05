@@ -1,30 +1,43 @@
+version: "2"
 linters:
   enable:
-    - govet
-    - staticcheck
-    - errcheck
-    - gosimple
-    - ineffassign
-    - unused
-    - gofmt
-    - goimports
     - gocritic
     - revive
   disable:
-    - wrapcheck
     - exhaustruct
     - varnamelen
-
-linters-settings:
-  goimports:
-    local-prefixes: ksniff
-  revive:
+    - wrapcheck
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: exported
-        disabled: true
-
-issues:
-  exclude-rules:
-    - path: "_test.go"
-      linters:
-        - errcheck
+      - linters:
+          - errcheck
+        path: _test.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - ksniff
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
