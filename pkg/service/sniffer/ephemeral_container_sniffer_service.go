@@ -15,6 +15,7 @@ import (
 
 	"ksniff/kube"
 	"ksniff/pkg/config"
+	"ksniff/pkg/service/sniffer/runtime"
 	"ksniff/utils"
 )
 
@@ -22,10 +23,6 @@ const (
 	ephemeralContainerPrefix       = "ksniff-ephem-"
 	ephemeralContainerPollInterval = 2 * time.Second
 )
-
-// DefaultTCPDumpImage is the default image used for ephemeral-mode sniffing.
-// Override at build time: -ldflags "-X ksniff/pkg/service/sniffer.DefaultTCPDumpImage=ghcr.io/owner/ksniff-tcpdump:v1.0.0"
-var DefaultTCPDumpImage = "ghcr.io/nyralei/ksniff-tcpdump:latest"
 
 type EphemeralContainerSnifferService struct {
 	settings               *config.KsniffSettings
@@ -160,7 +157,7 @@ func (e *EphemeralContainerSnifferService) tcpdumpImage() string {
 	if !e.settings.UseDefaultTCPDumpImage {
 		return e.settings.TCPDumpImage
 	}
-	return DefaultTCPDumpImage
+	return runtime.DefaultTCPDumpImage
 }
 
 // slogLineWriter routes line-buffered output (e.g. tcpdump stderr) into slog.

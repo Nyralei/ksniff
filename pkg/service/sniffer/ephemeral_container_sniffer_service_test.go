@@ -14,13 +14,14 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"ksniff/pkg/config"
+	"ksniff/pkg/service/sniffer/runtime"
 )
 
 func TestTcpdumpImage_Default(t *testing.T) {
 	svc := &EphemeralContainerSnifferService{
 		settings: &config.KsniffSettings{UseDefaultTCPDumpImage: true},
 	}
-	assert.Equal(t, DefaultTCPDumpImage, svc.tcpdumpImage())
+	assert.Equal(t, runtime.DefaultTCPDumpImage, svc.tcpdumpImage())
 }
 
 func TestTcpdumpImage_Custom(t *testing.T) {
@@ -88,8 +89,8 @@ func TestSetup_AddsEphemeralContainer(t *testing.T) {
 }
 
 func TestDefaultTCPDumpImage_NotEmpty(t *testing.T) {
-	require.NotEmpty(t, DefaultTCPDumpImage)
-	assert.True(t, strings.HasPrefix(DefaultTCPDumpImage, "ghcr.io/"), "expected ghcr.io image, got %q", DefaultTCPDumpImage)
+	require.NotEmpty(t, runtime.DefaultTCPDumpImage)
+	assert.True(t, strings.HasPrefix(runtime.DefaultTCPDumpImage, "ghcr.io/"), "expected ghcr.io image, got %q", runtime.DefaultTCPDumpImage)
 }
 
 // Verify slogLineWriter implements io.Writer

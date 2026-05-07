@@ -12,7 +12,7 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -X main.Version={{ .Tag }}
-      - -X ksniff/pkg/service/sniffer.DefaultTCPDumpImage=ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/ksniff-tcpdump:{{ .Tag }}
+      - -X ksniff/pkg/service/sniffer/runtime.DefaultTCPDumpImage=ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/ksniff-tcpdump:{{ .Tag }}
       - -X ksniff/pkg/service/sniffer/runtime.DefaultHelperImage=ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER | tolower }}/ksniff-helper:{{ .Tag }}
     goos:
       - linux

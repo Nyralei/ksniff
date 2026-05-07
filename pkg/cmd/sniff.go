@@ -269,6 +269,15 @@ func (o *Ksniff) Validate() error {
 		return errors.New("namespace is empty; specify one with -n or set a default namespace in your kubeconfig")
 	}
 
+	// Resolve wireshark up front when no output file is requested. Without this,
+	// we'd discover the missing binary only after creating the privileged pod and
+	// starting tcpdump on the node — a costly and leak-prone failure path.
+	if o.settings.UserSpecifiedOutputFile == "" {
+		if _, err := exec.LookPath("wireshark"); err != nil {
+			return fmt.Errorf("wireshark not found in PATH; install it or pass -o <file> to write the capture to disk: %w", err)
+		}
+	}
+
 	var err error
 
 	if o.settings.Mode == "upload" {
@@ -368,9 +377,27 @@ func (o *Ksniff) Run() error {
 		return err
 	}
 
+	// sniffCtx lets us abort the in-pod tcpdump exec independently of the parent
+	// signal context, so cleanup can join the sniffer goroutine before tearing
+	// down the privileged pod (otherwise cleanup races the in-flight `ctr run`
+	// and orphans the tcpdump task on the node).
+	sniffCtx, cancelSniff := context.WithCancel(ctx)
+	defer cancelSniff()
+
+	sniffJoin := make(chan struct{})
+
 	// Cleanup runs on every exit path: happy, signal, error, panic.
 	// A fresh context is used so SIGINT doesn't abort the cleanup itself.
 	defer func() {
+		cancelSniff()
+		// Wait for the sniffer goroutine to return before running cleanup so
+		// the runtime bridge's reap step (e.g. `ctr task kill`) sees a stable
+		// state, not a half-started container.
+		select {
+		case <-sniffJoin:
+		case <-time.After(10 * time.Second):
+			slog.Warn("sniffer goroutine did not exit; proceeding with cleanup anyway")
+		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		slog.Info("starting sniffer cleanup")
@@ -394,7 +421,9 @@ func (o *Ksniff) Run() error {
 			fileWriter = f
 		}
 
-		return o.snifferService.Start(ctx, fileWriter)
+		err := o.snifferService.Start(sniffCtx, fileWriter)
+		close(sniffJoin)
+		return err
 	}
 
 	slog.Info("spawning wireshark")
@@ -403,10 +432,18 @@ func (o *Ksniff) Run() error {
 	o.wireshark = exec.Command("wireshark", "-k", "-i", "-", "-o", title)
 
 	defer func() {
-		if o.wireshark != nil && o.wireshark.Process != nil {
-			if err := o.wireshark.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				slog.Error("failed to kill wireshark process", "error", err)
-			}
+		if o.wireshark == nil || o.wireshark.Process == nil {
+			return
+		}
+		// ProcessState is set once Run/Wait returns — if it's set, the process
+		// has already exited and Kill() is a noisy no-op. On Windows the API
+		// returns "invalid argument" rather than os.ErrProcessDone in that case,
+		// so checking ProcessState is the portable way to suppress it.
+		if o.wireshark.ProcessState != nil {
+			return
+		}
+		if err := o.wireshark.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			slog.Error("failed to kill wireshark process", "error", err)
 		}
 	}()
 
@@ -417,7 +454,8 @@ func (o *Ksniff) Run() error {
 
 	sniffDone := make(chan error, 1)
 	go func() {
-		sniffDone <- o.snifferService.Start(ctx, stdinWriter)
+		sniffDone <- o.snifferService.Start(sniffCtx, stdinWriter)
+		close(sniffJoin)
 	}()
 
 	wiresharkDone := make(chan error, 1)

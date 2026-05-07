@@ -46,7 +46,7 @@ IMAGE_TAG         ?= latest
 VERSION           ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 LDFLAGS := -ldflags "-X main.Version=$(VERSION) \
-  -X ksniff/pkg/service/sniffer.DefaultTCPDumpImage=$(IMAGE_REPO):$(IMAGE_TAG) \
+  -X ksniff/pkg/service/sniffer/runtime.DefaultTCPDumpImage=$(IMAGE_REPO):$(IMAGE_TAG) \
   -X ksniff/pkg/service/sniffer/runtime.DefaultHelperImage=$(HELPER_IMAGE_REPO):$(IMAGE_TAG)"
 
 # Build multi-arch image and verify it compiles for both platforms (cached, not pushed).

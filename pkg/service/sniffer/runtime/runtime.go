@@ -8,6 +8,12 @@ var SupportedContainerRuntimes = []string{
 	"containerd",
 }
 
+// DefaultTCPDumpImage is the default sniffer image used for both ephemeral and
+// privileged modes. Override at build time via:
+//
+//	-ldflags "-X ksniff/pkg/service/sniffer/runtime.DefaultTCPDumpImage=ghcr.io/owner/ksniff-tcpdump:v1.0.0"
+var DefaultTCPDumpImage = "ghcr.io/nyralei/ksniff-tcpdump:latest"
+
 type ContainerRuntimeBridge interface {
 	NeedsPid() bool
 	BuildInspectCommand(containerId string) []string

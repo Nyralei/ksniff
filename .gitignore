@@ -1,0 +1,8 @@
+kubectl-sniff
+kubectl-sniff.exe
+kubectl-sniff-windows
+kubectl-sniff-darwin
+kubectl-sniff-darwin-arm64
+static-tcpdump
+ksniff.zip
+*.pcap

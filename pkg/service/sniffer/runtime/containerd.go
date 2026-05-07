@@ -48,14 +48,43 @@ func (d *ContainerdBridge) BuildTcpdumpCommand(containerId *string, netInterface
     exec chroot /host ctr -a ${CONTAINERD_SOCKET} run --rm --with-ns "network:${netns}" %s %s %s
     `, socketPath, tcpdumpImage, *containerId, tcpdumpImage, containerName, tcpdumpCommand)
 
+	// The cleanup script must tolerate two timing windows:
+	//   (1) the sniffer goroutine never reached `ctr run` (e.g. wireshark died
+	//       during `crictl pull`) — there is nothing to kill, no-op cleanly;
+	//   (2) `ctr run` registered the container/task with containerd just
+	//       before (or just after) cleanup fires — we must wait for it to
+	//       appear and then kill it, otherwise the tcpdump task is orphaned
+	//       under containerd-shim on the host once this privileged pod dies.
+	// We poll briefly for the container name to show up, then kill+rm. If it
+	// never appears, the loop times out and cleanup ends without doing harm.
 	cleanupScript := fmt.Sprintf(`
-    set -e
+    set +e
     export CONTAINERD_SOCKET="%s"
     export CONTAINERD_NAMESPACE="k8s.io"
     export CONTAINER_ID="%s"
-    chroot /host ctr -a ${CONTAINERD_SOCKET} task kill -s SIGKILL ${CONTAINER_ID} || true
-    chroot /host ctr -a ${CONTAINERD_SOCKET} task rm --force ${CONTAINER_ID} || true
-    chroot /host ctr -a ${CONTAINERD_SOCKET} container rm ${CONTAINER_ID} || true
+    CTR="chroot /host ctr -a ${CONTAINERD_SOCKET}"
+
+    found=0
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if ${CTR} container ls -q 2>/dev/null | grep -qx "${CONTAINER_ID}"; then
+            found=1
+            break
+        fi
+        sleep 1
+    done
+
+    if [ "${found}" = "1" ]; then
+        ${CTR} task kill -s SIGKILL "${CONTAINER_ID}" >/dev/null 2>&1
+        for i in 1 2 3 4 5; do
+            if ! ${CTR} task ls 2>/dev/null | awk '{print $1}' | grep -qx "${CONTAINER_ID}"; then
+                break
+            fi
+            sleep 1
+        done
+        ${CTR} task rm --force "${CONTAINER_ID}" >/dev/null 2>&1
+        ${CTR} container rm "${CONTAINER_ID}" >/dev/null 2>&1
+    fi
+    exit 0
     `, socketPath, containerName)
 	d.cleanupCommand = []string{"/bin/sh", "-c", cleanupScript}
 
@@ -71,5 +100,5 @@ func (d ContainerdBridge) GetDefaultImage() string {
 }
 
 func (d *ContainerdBridge) GetDefaultTCPImage() string {
-	return "docker.io/maintained/tcpdump:latest"
+	return DefaultTCPDumpImage
 }

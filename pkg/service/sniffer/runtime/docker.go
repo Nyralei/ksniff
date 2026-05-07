@@ -33,7 +33,7 @@ func (d *DockerBridge) BuildTcpdumpCommand(containerId *string, netInterface str
 
 	command := []string{"docker", "--host", "unix://" + socketPath,
 		"run", "--rm", "--log-driver", "none", containerNameFlag,
-		fmt.Sprintf("--net=container:%s", *containerId), tcpdumpImage, "-i",
+		fmt.Sprintf("--net=container:%s", *containerId), tcpdumpImage, "tcpdump", "-i",
 		netInterface, "-U", "-w", "-", filter}
 
 	d.cleanupCommand = []string{"docker", "--host", "unix://" + socketPath,
@@ -51,7 +51,7 @@ func (d *DockerBridge) GetDefaultImage() string {
 }
 
 func (d *DockerBridge) GetDefaultTCPImage() string {
-	return "maintained/tcpdump"
+	return DefaultTCPDumpImage
 }
 
 func (d *DockerBridge) GetDefaultSocketPath() string {
