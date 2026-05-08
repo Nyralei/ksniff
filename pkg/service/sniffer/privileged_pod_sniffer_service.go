@@ -3,6 +3,7 @@ package sniffer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 
@@ -112,8 +113,18 @@ func (p *PrivilegedPodSnifferService) Start(ctx context.Context, stdOut io.Write
 
 	exitCode, err := p.kubernetesApiService.ExecuteCommand(ctx, p.privilegedPod.Name, p.privilegedContainerName, command, stdOut)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil // context cancelled — normal shutdown (wireshark closed, pod deleted, SIGINT)
+		}
 		slog.Error("failed to start sniffing using privileged pod", "error", err, "exitCode", exitCode)
 		return err
+	}
+	if exitCode == 137 || exitCode == 143 {
+		// SIGKILL/SIGTERM: helper pod was externally terminated (e.g. kubectl delete pod)
+		return nil
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("sniffing command exited with code %d; check that nsenter and tcpdump are present in the helper image", exitCode)
 	}
 
 	slog.Info("remote sniffing using privileged pod completed")

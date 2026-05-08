@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/viper"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -347,6 +348,46 @@ func (o *Ksniff) findContainerId(pod *corev1.Pod) error {
 	return fmt.Errorf("couldn't find container '%s' in pod '%s'", o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedPodName)
 }
 
+// watchTargetPod blocks until the target pod is deleted or enters a terminal
+// phase, then calls cancel to stop the sniffer. Returns silently when ctx is
+// done. Watch failures are logged but non-fatal — the sniff still works, it
+// just won't auto-stop on pod deletion.
+func (o *Ksniff) watchTargetPod(ctx context.Context, cancel context.CancelFunc) {
+	watcher, err := o.clientset.CoreV1().Pods(o.resultingContext.Namespace).Watch(ctx, v1.ListOptions{
+		FieldSelector: "metadata.name=" + o.settings.UserSpecifiedPodName,
+	})
+	if err != nil {
+		slog.Warn("could not watch target pod; sniff will not auto-stop on pod deletion", "error", err)
+		return
+	}
+	defer watcher.Stop()
+
+	for ev := range watcher.ResultChan() {
+		switch ev.Type {
+		case watch.Deleted:
+			slog.Info("target pod deleted; stopping sniff", "pod", o.settings.UserSpecifiedPodName)
+			cancel()
+			return
+		case watch.Modified:
+			pod, ok := ev.Object.(*corev1.Pod)
+			if !ok {
+				continue
+			}
+			if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+				slog.Info("target pod entered terminal phase; stopping sniff", "pod", o.settings.UserSpecifiedPodName, "phase", pod.Status.Phase)
+				cancel()
+				return
+			}
+		case watch.Error:
+			if ctx.Err() != nil {
+				return // context already cancelled (normal shutdown)
+			}
+			slog.Warn("watch error on target pod; sniff will not auto-stop on pod deletion", "event", ev.Object)
+			return
+		}
+	}
+}
+
 func (o *Ksniff) findLocalTcpdumpBinaryPath() (string, error) {
 	slog.Debug("searching for tcpdump binary", "paths", o.tcpdumpLocalBinaryPathLookupList)
 
@@ -385,6 +426,13 @@ func (o *Ksniff) Run() error {
 	defer cancelSniff()
 
 	sniffJoin := make(chan struct{})
+
+	// Watch the target pod and abort the sniff if it disappears or terminates.
+	// Without this, privileged-mode tcpdump runs against a netns owned by the
+	// target pod's pause container — once the target pod is deleted the netns
+	// goes away, but our tcpdump task survives under containerd-shim and leaks
+	// until the user notices and closes wireshark.
+	go o.watchTargetPod(sniffCtx, cancelSniff)
 
 	// Cleanup runs on every exit path: happy, signal, error, panic.
 	// A fresh context is used so SIGINT doesn't abort the cleanup itself.

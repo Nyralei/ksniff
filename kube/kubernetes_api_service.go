@@ -64,7 +64,9 @@ func (k *KubernetesApiServiceImpl) ExecuteCommand(ctx context.Context, podName s
 
 	exitCode, err := PodExecuteCommand(executeTcpdumpRequest)
 	if err != nil {
-		slog.Error("failed executing command", "error", err, "command", command, "exitCode", exitCode, "stderr", stdErr.Output)
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			slog.Error("failed executing command", "error", err, "command", command, "exitCode", exitCode, "stderr", stdErr.Output)
+		}
 		return exitCode, err
 	}
 
