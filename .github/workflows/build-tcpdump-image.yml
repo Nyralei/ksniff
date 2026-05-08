@@ -2,6 +2,11 @@ name: Build tcpdump image
 
 on:
   workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - images/ksniff-tcpdump/**
 
 jobs:
   build-image:
