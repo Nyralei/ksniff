@@ -23,7 +23,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - uses: AbsaOSS/k3d-action@v2
+      - uses: AbsaOSS/k3d-action@v3
         name: "Create single-node cluster"
         with:
           cluster-name: "test-cluster-1"
