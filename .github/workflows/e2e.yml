@@ -65,7 +65,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Setup Minikube
-        uses: medyagh/setup-minikube@v0.0.19
+        uses: medyagh/setup-minikube@v0.0.21
         with:
           kubernetes-version: v1.31.0
           driver: docker
@@ -105,7 +105,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Setup Minikube
-        uses: medyagh/setup-minikube@v0.0.19
+        uses: medyagh/setup-minikube@v0.0.21
         with:
           kubernetes-version: v1.31.0
           driver: docker
